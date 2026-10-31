@@ -1,181 +1,167 @@
-# Bit Torrent : Peer-to-Peer Group Based File Sharing System
+# Mini-Torrent: Peer-to-Peer Group File Sharing
 
-- The Mini-torrent project is basically a peer-to-peer file sharing network. The user
-has functionalities like sharing a file, downloading a file, removing a file from
-sharing etc. It is basically like the Bit-Torrent we have on the internet.
-- The architecture is such that there are multiple clients(users) and a tracker which stores the
-metadata of which all users have a file, basically a file-user mapping.
+A BitTorrent-style, group-based peer-to-peer file sharing system in C++. A central tracker keeps the metadata, and peers download pieces of a file from other peers in parallel.
 
-  ![image](https://user-images.githubusercontent.com/48115585/139272264-5951ea87-0a67-4f53-a49a-c6003274e550.png)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=flat-square&logo=cplusplus&logoColor=white)
+![Linux](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
+![Sockets](https://img.shields.io/badge/TCP-sockets-4E4E4E?style=flat-square)
+![pthreads](https://img.shields.io/badge/multithreading-pthreads-2E7D32?style=flat-square)
+![OpenSSL](https://img.shields.io/badge/OpenSSL-SHA1-721412?style=flat-square&logo=openssl&logoColor=white)
 
+## Overview
 
-## Prerequisites
+The system has two programs:
 
-**Software Requirement**
+- **Tracker** (`tracker.cpp`): a multi-threaded TCP server. It stores users, groups, membership and join requests, and for each shared file it records the file size, the SHA1 hash of every piece and the peers that have the file. It never stores or forwards file contents.
+- **Client / peer** (`client.cpp`): a command-line client that talks to the tracker, plus a background server thread that serves file pieces to other peers.
 
-1. G++ compiler
-   - **To install G++ :** `sudo apt-get install g++`
-2. OpenSSL library
+Files are shared within **groups**. A user creates a group and becomes its owner. Other users ask to join, and the owner accepts. Only group members can upload to a group or download from it.
 
-   - **To install OpenSSL library :** `sudo apt-get install openssl`
+![Architecture](https://user-images.githubusercontent.com/48115585/139272264-5951ea87-0a67-4f53-a49a-c6003274e550.png)
 
-**Platform:** Linux <br/>
+### How a download works
 
-## Installation
+1. The client asks the tracker for the file's size and the list of peers that have it, with their addresses.
+2. The client asks each peer for its piece **bit vector**, which shows the pieces that peer holds.
+3. The client walks through the pieces and assigns them to peers in round-robin order. Each piece is fetched on its own thread.
+4. Each thread writes its piece at the correct offset in the destination file.
+5. When the download finishes, the client hashes the file piece by piece and registers itself with the tracker as a new seeder. The tracker compares these hashes with the ones recorded at upload time and rejects the file if they differ.
+
+## Features
+
+- User accounts: create a user, log in, log out.
+- Groups: create, join (by request), leave, accept join requests, list pending requests and list all groups.
+- Share files within a group. The tracker stores per-piece SHA1 hashes, computed with OpenSSL.
+- Parallel, multi-peer downloads with one thread per piece.
+- Downloaded files become shareable from the downloading peer.
+- One thread per connected peer on the tracker, with mutexes guarding updates to the shared user and group maps.
+
+## Tech stack
+
+- **Language:** C++
+- **Networking:** BSD sockets (TCP, IPv4)
+- **Concurrency:** POSIX threads (`pthread`) and mutexes
+- **Hashing:** OpenSSL `SHA1` (`libcrypto`)
+- **Platform:** Linux
+
+## Project structure
 
 ```
-1. cd client
-2. make
-3. cd ../tracker
-5. make
-6. cd ..
+Peer-to-Peer-Group-Based-File-Sharing-System/
+├── tracker.cpp          # Tracker: users, groups, file metadata, peer lookup
+├── client.cpp           # Peer: CLI, tracker protocol, piece server, parallel downloader
+├── tracker_info.txt     # Tracker address(es), one IP:PORT per line
+└── AOS_Assignment3.pdf  # Original assignment specification
 ```
+
+## Getting started
+
+### Prerequisites
+
+- Linux
+- `g++` and the OpenSSL development headers:
+
+```bash
+sudo apt-get install g++ libssl-dev
+```
+
+### Build
+
+```bash
+git clone https://github.com/mkk96/Peer-to-Peer-Group-Based-File-Sharing-System.git
+cd Peer-to-Peer-Group-Based-File-Sharing-System
+
+g++ tracker.cpp -o tracker -pthread
+g++ client.cpp  -o client  -pthread -lcrypto
+```
+
+On OpenSSL 3.x the `SHA1()` call may produce deprecation warnings. These are harmless.
+
+### Tracker info file
+
+`tracker_info.txt` lists trackers as one `IP:PORT` per line:
+
+```text
+127.0.0.1:3601
+127.0.0.1:3602
+```
+
+Only the first entry is used. The tracker binds to it and the clients connect to it.
+
+### Run
+
+Start the tracker:
+
+```bash
+./tracker tracker_info.txt
+```
+
+Start one or more clients. Each one needs its own `IP:PORT`, which it uses to serve pieces to other peers:
+
+```bash
+./client 127.0.0.1:18000 tracker_info.txt
+./client 127.0.0.1:18001 tracker_info.txt
+```
+
+Stop the tracker with `Ctrl+C`.
 
 ## Usage
 
-### Tracker
+Type commands into a running client:
 
-1. Run Tracker:
+| Command | Description |
+| --- | --- |
+| `create_user <user_id> <password>` | Register a new user with the tracker |
+| `login <user_id> <password>` | Log in |
+| `create_group <group_id>` | Create a group (you become the owner) |
+| `join_group <group_id>` | Request to join a group |
+| `leave_group <group_id>` | Leave a group (the owner can't leave) |
+| `list_requests <group_id>` | Owner only: list pending join requests |
+| `accept_request <group_id> <user_id>` | Owner only: accept a join request |
+| `list_groups` | List all groups on the network |
+| `list_files <group_id>` | List files shared in a group |
+| `upload_file <file_path> <group_id>` | Share a local file with a group |
+| `download_file <group_id> <file_name> <destination_file_path>` | Download a shared file from peers |
+| `show_downloads` | Show files this client has shared or downloaded in this session |
+| `logout` | Log out |
 
-```
-cd tracker
-./tracker​ <TRACKER INFO FILE> <TRACKER NUMBER>
-ex: ./tracker tracker_info.txt 1
-```
+### Example
 
-`<TRACKER INFO FILE>` contains the IP, Port details of all the trackers.
+```text
+# Peer A (127.0.0.1:18000)
+create_user alice pass1
+login alice pass1
+create_group g1
+upload_file /home/alice/data/report.pdf g1
 
-```
-Ex:
-127.0.0.1
-5000
-127.0.0.1
-6000
-```
+# Peer B (127.0.0.1:18001)
+create_user bob pass2
+login bob pass2
+join_group g1
 
-2. Close Tracker:
+# Peer A
+list_requests g1
+accept_request g1 bob
 
-```
-quit
-```
-
-### Client:
-
-1. Run Client:
-
-```
-cd client
-./client​ <IP>:<PORT> <TRACKER INFO FILE>
-ex: ./client 127.0.0.1:18000 tracker_info.txt
-```
-
-2. Create user account:
-
-```
-create_user​ <user_id> <password>
-```
-
-3. Login:
-
-```
-login​ <user_id> <password>
-```
-
-4. Create Group:
-
-```
-create_group​ <group_id>
-```
-
-5. Join Group:
-
-```
-join_group​ <group_id>
-```
-
-6. Leave Group:
-
-```
-leave_group​ <group_id>
-```
-
-7. List pending requests:
-
-```
-list_requests ​<group_id>
-```
-
-8. Accept Group Joining Request:
-
-```
-accept_request​ <group_id> <user_id>
-```
-
-9. List All Group In Network:
-
-```
-list_groups
-```
-
-10. List All sharable Files In Group:
-
-```
-list_files​ <group_id>
-```
-
-11. Upload File:
-
-```
-​upload_file​ <file_path> <group_id​>
-```
-
-12. Download File:​
-
-```
-download_file​ <group_id> <file_name> <destination_path>
-```
-
-13. Logout:​
-
-```
-logout
-```
-
-14. Show_downloads: ​
-
-```
+# Peer B
+list_files g1
+download_file g1 report.pdf /home/bob/Downloads/report.pdf
 show_downloads
 ```
 
-15. Stop sharing: ​
+## Known limitations
 
-```
-stop_share ​<group_id> <file_name>
-```
+- Only a single tracker is supported. All state is kept in memory and is lost when the tracker stops.
+- Use absolute file paths.
+- `stop_share` is accepted by the client, but it only prints a confirmation and does not notify the tracker. Logging out does not stop the user's files from being shared.
+- The piece size is fixed by `blockSize` in `client.cpp` (`512 * 102400` bytes). Each piece is received with a single `recv()` call, so large pieces may not arrive in full over a real network. The system is best suited to small files and local testing.
+- The original notes say the SHA1 comparison can report a mismatch for binary files even when the download is correct.
+- Passwords are stored in plain text in the tracker's memory and sent unencrypted.
 
-## Working
+## Context
 
-1. User should create an account and register with tracker.
-2. Login using the user credentials.
-3. Tracker maintains information of clients with their files(shared by client) to assist the clients for the communication between peers.
-4. User can create Group and hence will become admin of that group.
-5. User can fetch list of all Groups in server.
-6. User can join/leave group.
-7. Group admin can accept group join requests.
-8. Share file across group: Shares the filename and SHA1 hash of the complete file as well as piecewise SHA1 with the tracker.
-9. Fetch list of all sharable files in a Group.
-10. Download:
-    1. Retrieve peer information from tracker for the file.
-    2. Download file from multiple peers (different pieces of file from different peers - ​piece selection algorithm​) simultaneously and all the files which client downloads will be shareable to other users in the same group. File integrity is ensured using SHA1 comparison.
-11. Piece selection algorithm used: Selects random piece and then downloads it from a random peer having that piece.
-12. Show downloads.
-13. Stop sharing file.
-14. Logout - stops sharing all files.
-15. Whenever client logins, all previously shared files before logout should automatically be on sharing mode.
+Built for Assignment 3 of the Advanced Operating Systems course at IIIT Hyderabad (M.Tech, 2021). `AOS_Assignment3.pdf` is the original specification.
 
-## Assumptions
+---
 
-1. Only one tracker is implemented and that tracker should always be online.
-2. The peer can login from different IP addresses, but the details of his downloads/uploads will not be persistent across sessions.
-3. SHA1 integrity checking doesn't work correctly for binary files, even though in most likelihood the file would have downloaded correctly.
-4. File paths should be absolute.
+Made by [Mukul Kumar](https://mkk96.github.io) · [GitHub](https://github.com/mkk96) · [LinkedIn](https://www.linkedin.com/in/mukul-kumar-60322616b/)
